@@ -8,9 +8,9 @@ dotenv.config();
 const app = express();
 app.use(express.json());
 
-// =========================
+// ======================
 // MongoDB Connection
-// =========================
+// ======================
 const MONGO_URI =
   process.env.MONGO_URI ||
   "mongodb+srv://<username>:<password>@cluster0.mongodb.net/aqiDB";
@@ -23,9 +23,9 @@ mongoose
   .then(() => console.log("✅ MongoDB connected"))
   .catch((err) => console.error("❌ MongoDB connection error:", err));
 
-// =========================
+// ======================
 // Schema & Model
-// =========================
+// ======================
 const airQualitySchema = new mongoose.Schema({
   air_quality: {
     temp: Number,
@@ -42,57 +42,74 @@ const airQualitySchema = new mongoose.Schema({
   },
   createdAt: {
     type: Date,
-    default: () => moment().tz("Asia/Karachi").toDate(),
+    default: () => moment().tz("Asia/Karachi").toDate(), // 🇵🇰
   },
 });
 
 const AirQuality = mongoose.model("AirQuality", airQualitySchema);
 
-// =========================
-// Store Latest Sensor Data in Memory
-// =========================
-let latestReading = null;
+// ======================
+// Buffer for Incoming Sensor Data
+// ======================
+let readingsBuffer = [];
 
-// 🟢 POST route — Receives data from sensor every 10s
+// Receive data every 10s from hardware — DO NOT save
 app.post("/api/aqi", (req, res) => {
-  latestReading = req.body; // Store latest data only
-  res.status(200).json({ message: "📩 Data received (not saved yet)" });
+  const data = req.body.air_quality;
+  if (data) {
+    readingsBuffer.push(data); // store in buffer
+  }
+  res.status(200).json({ message: "📩 Reading received (buffered)" });
 });
 
-// 🔵 GET route — Check current buffered data
+// Optional — check buffer size
 app.get("/api/aqi/latest", (req, res) => {
-  if (!latestReading) return res.json({ message: "No data received yet" });
-  res.json({ latestReading });
+  res.json({
+    bufferCount: readingsBuffer.length,
+    latest: readingsBuffer[readingsBuffer.length - 1] || null,
+  });
 });
 
-// =========================
-// 🕒 Auto-save every 30 minutes
-// =========================
+// ======================
+// Cron job — Every 30 minutes, average & save
+// ======================
 cron.schedule(
   "*/30 * * * *",
   async () => {
-    if (latestReading) {
-      try {
-        const record = new AirQuality(latestReading);
-        await record.save();
-        console.log(
-          `✅ Saved latest reading at ${moment()
-            .tz("Asia/Karachi")
-            .format("YYYY-MM-DD HH:mm:ss")}`
-        );
-      } catch (err) {
-        console.error("❌ Error saving data:", err.message);
-      }
-    } else {
-      console.log("⚠️ No data available to save yet");
+    if (readingsBuffer.length === 0) {
+      console.log("⚠️ No data in buffer to save");
+      return;
     }
+
+    // --- Compute averages ---
+    const fields = Object.keys(readingsBuffer[0]);
+    const avgReading = {};
+
+    for (const field of fields) {
+      const values = readingsBuffer.map((r) => r[field]);
+      avgReading[field] =
+        values.reduce((sum, val) => sum + Number(val || 0), 0) /
+        readingsBuffer.length;
+    }
+
+    const newRecord = new AirQuality({ air_quality: avgReading });
+    await newRecord.save();
+
+    console.log(
+      `✅ 30-min avg saved at ${moment()
+        .tz("Asia/Karachi")
+        .format("YYYY-MM-DD HH:mm:ss")} (🇵🇰)`
+    );
+
+    // Clear buffer for next 30-min window
+    readingsBuffer = [];
   },
   { scheduled: true, timezone: "Asia/Karachi" }
 );
 
-// =========================
+// ======================
 // Start Server
-// =========================
+// ======================
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () =>
   console.log(`🚀 Server running on port ${PORT} (🇵🇰 Pakistan Time)`)
