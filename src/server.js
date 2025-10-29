@@ -1,7 +1,6 @@
 import express from "express";
 import mongoose from "mongoose";
 import dotenv from "dotenv";
-import moment from "moment-timezone";
 
 dotenv.config();
 const app = express();
@@ -41,59 +40,56 @@ const airQualitySchema = new mongoose.Schema({
   },
   createdAt: {
     type: Date,
-    default: () => moment().tz("Asia/Karachi").toDate(), // 🇵🇰 Timezone
+    default: Date.now,
   },
 });
 
 const AirQuality = mongoose.model("AirQuality", airQualitySchema);
 
 // =========================
-// Store last saved time
+// Time + Buffer setup
 // =========================
-let lastSavedTime = null; // will store Date when last record was saved
+let lastSavedTime = null;
+let latestData = null;
+
+// Helper function to get current Pakistan Standard Time
+function getPakistanTime() {
+  const date = new Date();
+  const utc = date.getTime() + date.getTimezoneOffset() * 60000;
+  const pst = new Date(utc + 5 * 60 * 60 * 1000); // UTC+5 for Pakistan
+  return pst;
+}
 
 // =========================
 // Routes
 // =========================
 
-// 🟢 POST route — Save sensor data every 30 minutes
+// 🟢 POST route — Receive sensor data every 10 seconds
 app.post("/api/aqi", async (req, res) => {
   try {
-    const currentTime = moment().tz("Asia/Karachi"); // current time in PKT
+    latestData = req.body; // store the most recent reading
+    const now = new Date();
 
-    // If we have a saved time, check time difference
-    if (lastSavedTime) {
-      const diffMinutes = currentTime.diff(lastSavedTime, "minutes");
+    // If never saved before, or 30 minutes have passed since last save
+    if (!lastSavedTime || now - lastSavedTime >= 30 * 60 * 1000) {
+      lastSavedTime = now;
 
-      // If less than 30 minutes passed → reject new save
-      if (diffMinutes < 30) {
-        return res.status(429).json({
-          message: `❌ Please wait ${
-            30 - diffMinutes
-          } more minutes before next submission.`,
-          nextAllowedAt: lastSavedTime.add(30, "minutes").format("YYYY-MM-DD HH:mm:ss"),
-        });
-      }
+      // Set Pakistan Time for createdAt
+      const pakistanTime = getPakistanTime();
+
+      const newRecord = new AirQuality({
+        ...latestData,
+        createdAt: pakistanTime,
+      });
+
+      await newRecord.save();
+      console.log(`✅ Saved AQI data at ${pakistanTime.toLocaleString("en-PK")}`);
     }
 
-    // Save new data
-    const newRecord = new AirQuality(req.body);
-    await newRecord.save();
-
-    // Update last saved time
-    lastSavedTime = currentTime;
-
-    res.status(201).json({
-      message: "✅ Data saved successfully",
-      savedAt: currentTime.format("YYYY-MM-DD HH:mm:ss"),
-      data: newRecord,
-    });
+    res.status(200).json({ message: "✅ Data received (may or may not be saved yet)" });
   } catch (err) {
     console.error(err);
-    res.status(500).json({
-      message: "❌ Error saving data",
-      error: err.message,
-    });
+    res.status(500).json({ message: "❌ Error processing data", error: err.message });
   }
 });
 
@@ -103,10 +99,7 @@ app.get("/api/aqi", async (req, res) => {
     const allData = await AirQuality.find().sort({ createdAt: -1 });
     res.json(allData);
   } catch (err) {
-    res.status(500).json({
-      message: "❌ Error fetching data",
-      error: err.message,
-    });
+    res.status(500).json({ message: "❌ Error fetching data", error: err.message });
   }
 });
 
@@ -114,6 +107,4 @@ app.get("/api/aqi", async (req, res) => {
 // Start Server
 // =========================
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () =>
-  console.log(`🚀 Server running on port ${PORT} (🇵🇰 Pakistan Standard Time)`)
-);
+app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
