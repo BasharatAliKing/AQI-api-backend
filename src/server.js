@@ -1,10 +1,10 @@
 import express from "express";
 import mongoose from "mongoose";
 import dotenv from "dotenv";
-
+import moment from "moment-timezone";
 dotenv.config();
 const app = express();
-app.use(express.json());
+app.use(express.json()); // Parse incoming JSON
 
 // =========================
 // MongoDB Connection
@@ -15,8 +15,8 @@ const MONGO_URI =
 
 mongoose
   .connect(MONGO_URI, {
-    useNewUrlParser: true,
-    useUnifiedTopology: true,
+    // useNewUrlParser: true,
+    // useUnifiedTopology: true,
   })
   .then(() => console.log("✅ MongoDB connected"))
   .catch((err) => console.error("❌ MongoDB connection error:", err));
@@ -25,6 +25,11 @@ mongoose
 // Schema & Model
 // =========================
 const airQualitySchema = new mongoose.Schema({
+  project_name: {
+    type: String,
+    required: true,
+    trim: true,
+  },
   air_quality: {
     temp: Number,
     hum: Number,
@@ -39,67 +44,103 @@ const airQualitySchema = new mongoose.Schema({
     lon: Number,
   },
   createdAt: {
-    type: Date,
-    default: Date.now,
+    type: String,
+    default: () => moment().tz("Asia/Karachi").format("YYYY-MM-DD HH:mm:ss"),
   },
 });
 
 const AirQuality = mongoose.model("AirQuality", airQualitySchema);
 
 // =========================
-// Time + Buffer setup
-// =========================
-let lastSavedTime = null;
-let latestData = null;
-
-// Helper function to get current Pakistan Standard Time
-function getPakistanTime() {
-  const date = new Date();
-  const utc = date.getTime() + date.getTimezoneOffset() * 60000;
-  const pst = new Date(utc + 5 * 60 * 60 * 1000); // UTC+5 for Pakistan
-  return pst;
-}
-
-// =========================
 // Routes
 // =========================
 
-// 🟢 POST route — Receive sensor data every 10 seconds
+// 🟢 POST route — Save sensor data
 app.post("/api/aqi", async (req, res) => {
   try {
-    latestData = req.body; // store the most recent reading
-    const now = new Date();
-
-    // If never saved before, or 30 minutes have passed since last save
-    if (!lastSavedTime || now - lastSavedTime >= 30 * 60 * 1000) {
-      lastSavedTime = now;
-
-      // Set Pakistan Time for createdAt
-      const pakistanTime = getPakistanTime();
-
-      const newRecord = new AirQuality({
-        ...latestData,
-        createdAt: pakistanTime,
+    const { project_name, air_quality } = req.body;
+    if (!project_name || !air_quality) {
+      return res.status(400).json({
+        message: "❌ project_name and air_quality are required",
       });
-
-      await newRecord.save();
-      console.log(`✅ Saved AQI data at ${pakistanTime.toLocaleString("en-PK")}`);
     }
 
-    res.status(200).json({ message: "✅ Data received (may or may not be saved yet)" });
+    const newRecord = new AirQuality({ project_name, air_quality });
+    await newRecord.save();
+
+    res
+      .status(201)
+      .json({ message: "✅ Data saved successfully", data: newRecord });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ message: "❌ Error processing data", error: err.message });
+    res
+      .status(500)
+      .json({ message: "❌ Error saving data", error: err.message });
   }
 });
 
-// 🔵 GET route — Fetch all records
+// 🔵 GET route — Fetch all records, optionally filtered by project
 app.get("/api/aqi", async (req, res) => {
   try {
-    const allData = await AirQuality.find().sort({ createdAt: -1 });
-    res.json(allData);
+    const { project_name } = req.query;
+    const filter = project_name ? { project_name } : {};
+    const allData = await AirQuality.find(filter).sort({ createdAt: -1 });
+
+    const formattedData = allData.map((item) => ({
+      ...item.toObject(),
+      createdAt: moment(item.createdAt)
+        .tz("Asia/Karachi")
+        .format("YYYY-MM-DD HH:mm:ss"),
+    }));
+    res.json(formattedData);
   } catch (err) {
-    res.status(500).json({ message: "❌ Error fetching data", error: err.message });
+    res
+      .status(500)
+      .json({ message: "❌ Error fetching data", error: err.message });
+  }
+});
+
+// 🟡 GET route — List distinct projects
+app.get("/api/aqi/projects", async (req, res) => {
+  try {
+    const projects = await AirQuality.distinct("project_name");
+    res.json({ projects });
+  } catch (err) {
+    res
+      .status(500)
+      .json({ message: "❌ Error fetching project list", error: err.message });
+  } 
+});
+// 🟣 UPDATE — Update one record by ID
+app.put("/api/aqi/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const updated = await AirQuality.findByIdAndUpdate(id, req.body, {
+      new: true, // return updated doc
+      runValidators: true,
+    });
+    if (!updated)
+      return res.status(404).json({ message: "❌ Record not found" });
+    res.json({ message: "✅ Data updated successfully", data: updated });
+  } catch (err) {
+    res
+      .status(500)
+      .json({ message: "❌ Error updating data", error: err.message });
+  }
+});
+
+// 🔴 DELETE — Remove one record by ID
+app.delete("/api/aqi/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const deleted = await AirQuality.findByIdAndDelete(id);
+    if (!deleted)
+      return res.status(404).json({ message: "❌ Record not found" });
+    res.json({ message: "🗑️ Record deleted successfully" });
+  } catch (err) {
+    res
+      .status(500)
+      .json({ message: "❌ Error deleting data", error: err.message });
   }
 });
 
