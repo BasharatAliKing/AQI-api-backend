@@ -10,8 +10,9 @@ const app = express();
 const allowedOrigins = [
   "http://localhost:5173",              // Vite local
   "http://localhost:3000",              // React local
-  "https://yourfrontend.com",           // Production frontend
-  "https://www.yourfrontend.com",
+  "https://apiaqi.nespakprogresscenter.com",           // Production frontend
+  "http://apiaqi.nespakprogresscenter.com",           // Production frontend
+ // "https://www.yourfrontend.com",
 ];
 
 app.use(
