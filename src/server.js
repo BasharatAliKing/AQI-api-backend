@@ -2,10 +2,36 @@ import express from "express";
 import mongoose from "mongoose";
 import dotenv from "dotenv";
 import moment from "moment-timezone";
+import cors from "cors";
 dotenv.config();
 const app = express();
-app.use(express.json()); // Parse incoming JSON
 
+// Allowed origins
+const allowedOrigins = [
+  "http://localhost:5173",              // Vite local
+  "http://localhost:3000",              // React local
+  "https://yourfrontend.com",           // Production frontend
+  "https://www.yourfrontend.com",
+];
+
+app.use(
+  cors({
+    origin: function (origin, callback) {
+      // Allow requests without Origin (Postman, mobile apps, ESP32, etc.)
+      if (!origin) return callback(null, true);
+
+      if (allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error("CORS Not Allowed"));
+      }
+    },
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+  })
+);
+app.use(express.json());
 // =========================
 // MongoDB Connection
 // =========================
@@ -13,8 +39,8 @@ const MONGO_URI =
   process.env.MONGO_URI ||
   "mongodb+srv://<username>:<password>@cluster0.mongodb.net/aqiDB";
 
-mongoose
-  .connect(MONGO_URI, {
+mongoose 
+  .connect(MONGO_URI, { 
     // useNewUrlParser: true,
     // useUnifiedTopology: true,
   })
